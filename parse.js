@@ -2011,9 +2011,11 @@ function parseBlocks(lines, refs, isDoc, srcEndsNL, inListItem) {
           if (endRe.test(l)) break;
         }
       }
-      // Trailing newline: at document level when the next line is non-blank
-      // content, or when this is the last block and the source ends with one.
-      const trailingNL = isDoc && ((i < lines.length && !isBlank(lines[i])) || (i >= lines.length && srcEndsNL));
+      // Trailing newline: at document level when the next line is non-empty
+      // (a whitespace-only line still counts — only a truly empty line
+      // suppresses it), or when this is the last block and the source ends
+      // with one.
+      const trailingNL = isDoc && ((i < lines.length && lines[i].length > 0) || (i >= lines.length && srcEndsNL));
       pushBlk({ t: 'html', text: htmlLines.join('\n') + (trailingNL ? '\n' : '') });
       continue;
     }
