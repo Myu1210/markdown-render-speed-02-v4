@@ -848,15 +848,36 @@ function backpedalUrl(url) {
     }
     if (EXT_PUNCT.indexOf(c) >= 0) { end--; continue; }
     if (c === ')') {
-      let open = 0, close = 0;
-      for (let i = 0; i < end; i++) { if (url[i] === '(') open++; else if (url[i] === ')') close++; }
-      if (close > open) { end--; continue; }
+      // A trailing ')' is kept iff it closes an open paren: scan the
+      // URL before it, tracking depth ('(' opens, ')' closes only when
+      // depth > 0). An unmatched ')' in the middle does not count
+      // against the trailing one.
+      let depth = 0;
+      for (let i = 0; i < end - 1; i++) {
+        if (url[i] === '(') depth++;
+        else if (url[i] === ')' && depth > 0) depth--;
+      }
+      if (depth === 0) { end--; continue; }
     }
     break;
   }
   return url.slice(0, end);
 }
 function isDomainChar(c) { return isAlnumCh(c) || c === '-'; }
+// True if the paren group starting at s[p] === '(' contains a space
+// before its matching ')'. Used to tell a titled link dest apart from a
+// title-less one.
+function hasSpaceInParens(s, p) {
+  let depth = 0;
+  for (let q = p; q < s.length; q++) {
+    const c = s[q];
+    if (c === '(') depth++;
+    else if (c === ')') { depth--; if (depth === 0) return false; }
+    else if (c === ' ' || c === '\t' || c === '\n') return true;
+    if (c === '\n') return false;
+  }
+  return false;
+}
 function tryExtAutolink(s, i, inLink) {
   if (inLink) return null;
   const n = s.length;
@@ -890,10 +911,13 @@ function tryExtAutolink(s, i, inLink) {
       let m = k;
       while (m < n && !isSpaceCh(s[m]) && s[m].charCodeAt(0) >= 32 && s[m] !== '<') m++;
       let url = s.slice(i, m);
-      // A '](' ends the URL (the ']' is kept, the '(' and after are not):
-      // a bare URL never swallows a following link destination.
+      // A '](' ends the URL (the ']' is kept, the '(' and after are not)
+      // — but ONLY when the '(...)' holds a space before its closing
+      // paren (a dest with a title): a bare URL never swallows a
+      // following titled link destination. A title-less dest stays part
+      // of the autolink.
       const bp = url.indexOf('](');
-      if (bp >= 0) url = url.slice(0, bp + 1);
+      if (bp >= 0 && hasSpaceInParens(s, i + bp + 1)) url = url.slice(0, bp + 1);
       url = backpedalUrl(url);
       if (url.length > 4) {
         return { end: i + url.length, html: '<a href="http://' + escHref(url) + '">' + escText(url) + '</a>' };
@@ -911,10 +935,13 @@ function tryExtAutolink(s, i, inLink) {
       while (m < n && !isSpaceCh(s[m]) && s[m].charCodeAt(0) >= 32 && s[m] !== '<') m++;
       if (m > k + 1) {
         let url = s.slice(i, m);
-        // A '](' ends the URL (the ']' is kept, the '(' and after are not):
-        // a bare URL never swallows a following link destination.
+        // A '](' ends the URL (the ']' is kept, the '(' and after are not)
+        // — but ONLY when the '(...)' holds a space before its closing
+        // paren (a dest with a title): a bare URL never swallows a
+        // following titled link destination. A title-less dest stays part
+        // of the autolink.
         const bp = url.indexOf('](');
-        if (bp >= 0) url = url.slice(0, bp + 1);
+        if (bp >= 0 && hasSpaceInParens(s, i + bp + 1)) url = url.slice(0, bp + 1);
         // An email-like target whose domain ends in '-' or '_' is not an
         // autolink (checked BEFORE backpedaling strips the trailing char).
         {
@@ -1894,13 +1921,16 @@ function parseBlocks(lines, refs, isDoc, srcEndsNL, inListItem) {
     if (fence) {
       closePara();
       const fenceInd = indentCols(line);
+      // Tilde fences do NOT strip the fence indent from content lines
+      // (marked quirk); backtick fences strip up to the fence indent.
+      const stripN = fence.marker === '~' ? 0 : fenceInd;
       const codeLines = [];
       i++;
       while (i < lines.length) {
         const l = lines[i];
         const fm = matchFence(l);
         if (fm && fm.marker === fence.marker && fm.len >= fence.len && fm.info === '') { i++; break; }
-        codeLines.push(stripFenceCols(l, fenceInd));
+        codeLines.push(stripFenceCols(l, stripN));
         i++;
       }
       { if (codeLines.length > 0 && codeLines[codeLines.length - 1] === '') codeLines.pop(); pushBlk({ t: 'fence', info: fence.info, text: codeLines.join('\n') + (codeLines.length ? '\n' : '') }); }
